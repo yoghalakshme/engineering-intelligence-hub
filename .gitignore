@@ -1,0 +1,28 @@
+﻿# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Python virtual environment
+venv/
+.venv/
+
+# Python cache files
+__pycache__/
+*.py[cod]
+
+# ChromaDB local database
+data/chroma_db/
+
+# Uploaded documents
+data/raw/
+data/pdf/
+data/processed/
+
+# Streamlit secrets
+.streamlit/secrets.toml
+
+# IDE and operating system files
+.vscode/
+.DS_Store
+Thumbs.db
