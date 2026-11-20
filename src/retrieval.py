@@ -6,8 +6,17 @@ from src.embeddings import create_embeddings
 # Maximum cosine distance for accepting retrieved chunks
 MAX_DISTANCE = 0.80
 
+# Maximum number of PDFs to compare
+MAX_DOCUMENTS = 5
 
-# Get all uploaded PDF filenames
+# Maximum relevant chunks per PDF
+CHUNKS_PER_DOCUMENT = 3
+
+
+# =====================================
+# 1. GET ALL AVAILABLE PDF SOURCES
+# =====================================
+
 def get_available_sources():
 
     result = collection.get(include=["metadatas"])
@@ -21,70 +30,127 @@ def get_available_sources():
     return sorted(sources)
 
 
-# Search documents with source information
-def search_documents_with_sources(question, source=None):
+# =====================================
+# 2. SEARCH ACROSS MULTIPLE DOCUMENTS
+# =====================================
+
+
+def search_documents_with_sources(
+    question,
+    source=None,
+    selected_sources=None
+):
 
     # Convert question into an embedding
     query_embedding = create_embeddings([question])[0]
 
-    search_args = {
-        "query_embeddings": [query_embedding],
-        "n_results": 3
-    }
+    available_sources = get_available_sources()
 
-    # Filter by selected PDF
-    if source and source != "All documents":
-        search_args["where"] = {"source": source}
+    # Select documents for retrieval
+    if selected_sources is not None:
 
-    # Search ChromaDB
-    results = collection.query(**search_args)
+        selected_documents = [
+            name for name in selected_sources
+            if name in available_sources
+        ]
 
-    # Check whether any documents were retrieved
-    if not results.get("documents") or not results["documents"][0]:
-        print("\nNo documents retrieved.")
-        return []
+    elif source and source != "All documents":
 
-    documents = results["documents"][0]
-    metadatas = results["metadatas"][0]
+        selected_documents = (
+            [source] if source in available_sources else []
+        )
 
-    distances_result = results.get("distances")
-
-    if not distances_result or not distances_result[0]:
-        distances = [float("inf")] * len(documents)
     else:
-        distances = distances_result[0]
+
+        selected_documents = available_sources[:MAX_DOCUMENTS]
+
+    if not selected_documents:
+        print("No available documents found.")
+        return []
 
     matches = []
 
-    print("\n--- RETRIEVAL DISTANCE SCORES ---")
+    print("\n--- MULTI-DOCUMENT RETRIEVAL ---")
 
-    # Filter chunks using cosine distance
-    for i, (document, metadata, distance) in enumerate(
-        zip(documents, metadatas, distances)
-    ):
+    for filename in selected_documents:
 
-        print(f"Chunk {i+1}: {distance:.4f}")
+        results = collection.query(
+            query_embeddings=[query_embedding],
+            n_results=CHUNKS_PER_DOCUMENT,
+            where={"source": filename}
+        )
 
-        if distance <= MAX_DISTANCE:
+        if not results.get("documents") or not results["documents"][0]:
+            continue
 
-            if metadata is None:
-                metadata = {
-                    "source": "Unknown / legacy document",
-                    "chunk_index": -1
-                }
+        documents = results["documents"][0]
+        metadatas = results["metadatas"][0]
+        distances_result = results.get("distances")
 
-            matches.append((document, metadata))
+        if not distances_result or not distances_result[0]:
+            distances = [float("inf")] * len(documents)
+        else:
+            distances = distances_result[0]
 
-    print("---------------------------------")
+        accepted_count = 0
 
-    print("Accepted chunks:", len(matches))
-    print("Rejected chunks:", len(documents) - len(matches))
+        for document, metadata, distance in zip(
+            documents, metadatas, distances
+        ):
+
+            print(f"{filename} | Distance: {distance:.4f}")
+
+            if distance <= MAX_DISTANCE:
+
+                if metadata is None:
+                    metadata = {
+                        "source": filename,
+                        "chunk_index": -1
+                    }
+
+                matches.append((document, metadata))
+                accepted_count += 1
+
+        print(f"Accepted from {filename}: {accepted_count}")
+
+    print("--------------------------------")
+    print("Total accepted chunks:", len(matches))
     print()
 
     return matches
 
 
-# Maintain compatibility with previous code
+
+# =====================================
+# 3. GROUP RESULTS BY PDF
+# =====================================
+
+def group_results_by_source(results):
+
+    grouped_results = {}
+
+    for document, metadata in results:
+
+        source = metadata.get(
+            "source",
+            "Unknown / legacy document"
+        )
+
+        if source not in grouped_results:
+            grouped_results[source] = []
+
+        grouped_results[source].append({
+            "content": document,
+            "chunk_index": metadata.get("chunk_index", -1)
+        })
+
+    return grouped_results
+
+
+# =====================================
+# 4. OLD FUNCTION RETAINED
+# =====================================
+
 def search_documents(question):
 
     results = search_documents_with_sources(question)
@@ -95,19 +161,26 @@ def search_documents(question):
     ]
 
 
-# Test retrieval independently
+# =====================================
+# 5. TEST RETRIEVAL
+# =====================================
+
 if __name__ == "__main__":
 
-    question = "How does self-attention work?"
+    question = question = "What is Hadoop and how does it process large datasets?"
 
     results = search_documents_with_sources(question)
 
-    if not results:
+    grouped = group_results_by_source(results)
+
+    if not grouped:
         print("No relevant information found.")
 
-    for document, metadata in results:
+    for filename, chunks in grouped.items():
 
-        print("\nSource:", metadata["source"])
-        print("Chunk:", metadata["chunk_index"])
-        print("Content:")
-        print(document)
+        print("\nSource:", filename)
+
+        for chunk in chunks:
+            print("Chunk:", chunk["chunk_index"])
+            print("Content:")
+            print(chunk["content"])
