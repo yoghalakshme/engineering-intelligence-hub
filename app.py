@@ -18,10 +18,18 @@ from src.retrieval import (
     group_results_by_source
 )
 
+from src.chat_history import (
+    create_conversation,
+    save_message,
+    get_conversations,
+    get_messages,
+    delete_conversation
+)
 
-# --------------------------------------------------
+
+# ==================================================
 # PAGE CONFIGURATION
-# --------------------------------------------------
+# ==================================================
 
 st.set_page_config(
     page_title="Engineering Intelligence Hub",
@@ -30,12 +38,21 @@ st.set_page_config(
 )
 
 
-# --------------------------------------------------
+# ==================================================
 # SESSION STATE INITIALIZATION
-# --------------------------------------------------
+# ==================================================
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
+
+if "active_conversation_id" not in st.session_state:
+    st.session_state.active_conversation_id = None
+
+if "active_conversation_mode" not in st.session_state:
+    st.session_state.active_conversation_mode = None
+
+if "mode_selector" not in st.session_state:
+    st.session_state.mode_selector = "Ask Questions"
 
 if "comparison_result" not in st.session_state:
     st.session_state.comparison_result = ""
@@ -47,9 +64,9 @@ if "comparison_question" not in st.session_state:
     st.session_state.comparison_question = ""
 
 
-# --------------------------------------------------
-# CLEAR COMPARISON RESULT
-# --------------------------------------------------
+# ==================================================
+# HELPER FUNCTIONS
+# ==================================================
 
 def clear_comparison_result():
 
@@ -58,9 +75,112 @@ def clear_comparison_result():
     st.session_state.comparison_question = ""
 
 
-# --------------------------------------------------
+def start_new_chat():
+
+    st.session_state.active_conversation_id = None
+    st.session_state.active_conversation_mode = None
+    st.session_state.messages = []
+
+    clear_comparison_result()
+
+    st.session_state.mode_selector = "Ask Questions"
+
+
+def handle_mode_change():
+
+    # Start a fresh conversation when the user
+    # manually changes between the two modes.
+
+    st.session_state.active_conversation_id = None
+    st.session_state.active_conversation_mode = None
+    st.session_state.messages = []
+
+    clear_comparison_result()
+
+
+def open_conversation(conversation):
+
+    conversation_id = conversation["id"]
+
+    conversation_mode = conversation.get(
+        "mode",
+        "Ask Questions"
+    )
+
+    if conversation_mode not in [
+        "Ask Questions",
+        "Compare Documents"
+    ]:
+        conversation_mode = "Ask Questions"
+
+    st.session_state.active_conversation_id = conversation_id
+
+    st.session_state.active_conversation_mode = conversation_mode
+
+    st.session_state.messages = get_messages(
+        conversation_id
+    )
+
+    # Restore the original mode.
+    st.session_state.mode_selector = conversation_mode
+
+    clear_comparison_result()
+
+
+def get_active_conversation_id(title, mode):
+
+    # Create a new conversation if there is no active
+    # conversation or if the mode has changed.
+
+    if (
+        st.session_state.active_conversation_id is None
+        or st.session_state.active_conversation_mode != mode
+    ):
+
+        conversation_id = create_conversation(
+            title=title[:60],
+            mode=mode
+        )
+
+        st.session_state.active_conversation_id = conversation_id
+
+        st.session_state.active_conversation_mode = mode
+
+    return st.session_state.active_conversation_id
+
+
+def display_messages():
+
+    for message in st.session_state.messages:
+
+        with st.chat_message(message["role"]):
+
+            st.markdown(message["content"])
+
+            sources = message.get("sources", [])
+
+            if message["role"] == "assistant" and sources:
+
+                with st.expander("📚 View Retrieved Sources"):
+
+                    for i, source in enumerate(sources):
+
+                        st.markdown(
+                            f"**Source {i + 1}: {source['source']}**"
+                        )
+
+                        st.markdown(
+                            f"Chunk: {source['chunk_index']}"
+                        )
+
+                        st.write(source["content"])
+
+                        st.divider()
+
+
+# ==================================================
 # PAGE TITLE
-# --------------------------------------------------
+# ==================================================
 
 st.title("🤖 Engineering Intelligence Hub")
 
@@ -74,23 +194,112 @@ st.markdown(
 )
 
 
-# --------------------------------------------------
+# ==================================================
 # SIDEBAR
-# --------------------------------------------------
+# ==================================================
 
 with st.sidebar:
 
     st.header("⚙️ Settings")
 
-    if st.button("Clear Chat", use_container_width=True):
+    # ----------------------------------------------
+    # NEW CHAT
+    # ----------------------------------------------
 
-        st.session_state.messages = []
+    if st.button(
+        "➕ New Chat",
+        use_container_width=True
+    ):
+
+        start_new_chat()
         st.rerun()
 
     st.divider()
 
     # ----------------------------------------------
-    # UPLOAD DOCUMENTS
+    # CHAT HISTORY
+    # ----------------------------------------------
+
+    st.subheader("💬 Chat History")
+
+    conversations = get_conversations()
+
+    if conversations:
+
+        for conversation in conversations:
+
+            conversation_id = conversation["id"]
+
+            title = conversation["title"]
+
+            conversation_mode = conversation.get(
+                "mode",
+                "Ask Questions"
+            )
+
+            # Short mode label
+            if conversation_mode == "Compare Documents":
+                mode_label = "📊"
+            else:
+                mode_label = "💬"
+
+            if st.button(
+                f"{mode_label} {title[:35]}",
+                key=f"chat_{conversation_id}",
+                use_container_width=True
+            ):
+
+                open_conversation(conversation)
+
+                st.rerun()
+
+        st.divider()
+
+        # ------------------------------------------
+        # DELETE CONVERSATION
+        # ------------------------------------------
+
+        delete_options = {
+            f"{chat['title'][:35]} (ID: {chat['id']})": chat["id"]
+            for chat in conversations
+        }
+
+        selected_chat = st.selectbox(
+            "Select conversation to delete",
+            options=list(delete_options.keys()),
+            key="delete_chat_select"
+        )
+
+        if st.button(
+            "🗑️ Delete Chat",
+            use_container_width=True
+        ):
+
+            conversation_id = delete_options[selected_chat]
+
+            delete_conversation(conversation_id)
+
+            if (
+                st.session_state.active_conversation_id
+                == conversation_id
+            ):
+
+                start_new_chat()
+
+            st.success(
+                "Conversation deleted successfully!"
+            )
+
+            st.rerun()
+
+    else:
+
+        st.info("No previous conversations yet.")
+
+    st.divider()
+
+    # ----------------------------------------------
+    # PDF UPLOAD
     # ----------------------------------------------
 
     st.subheader("📄 Upload Documents")
@@ -151,6 +360,7 @@ with st.sidebar:
         for filename, chunk_count in documents.items():
 
             st.write(f"📄 **{filename}**")
+
             st.caption(f"{chunk_count} chunks")
 
         st.divider()
@@ -176,8 +386,6 @@ with st.sidebar:
                 try:
 
                     delete_document(selected_delete)
-
-                    st.session_state.messages = []
 
                     clear_comparison_result()
 
@@ -209,13 +417,13 @@ with st.sidebar:
     st.divider()
 
     st.caption(
-        "Powered by Python, ChromaDB and Groq"
+        "Powered by Python, ChromaDB, SQLite and Groq"
     )
 
 
-# --------------------------------------------------
+# ==================================================
 # MODE SELECTION
-# --------------------------------------------------
+# ==================================================
 
 st.subheader("🔍 Choose Your Mode")
 
@@ -224,7 +432,7 @@ mode = st.radio(
     ["Ask Questions", "Compare Documents"],
     horizontal=True,
     key="mode_selector",
-    on_change=clear_comparison_result
+    on_change=handle_mode_change
 )
 
 
@@ -254,38 +462,6 @@ if mode == "Ask Questions":
     st.divider()
 
     # ----------------------------------------------
-    # DISPLAY CHAT HISTORY
-    # ----------------------------------------------
-
-    for message in st.session_state.messages:
-
-        with st.chat_message(message["role"]):
-
-            st.markdown(message["content"])
-
-            if (
-                message["role"] == "assistant"
-                and message.get("sources")
-            ):
-
-                with st.expander("📚 View Source Context"):
-
-                    for i, source in enumerate(
-                        message["sources"]
-                    ):
-
-                        st.markdown(
-                            f"**Source {i + 1}: "
-                            f"{source['source']}**"
-                        )
-
-                        st.markdown(
-                            f"Chunk: {source['chunk_index']}"
-                        )
-
-                        st.write(source["content"])
-
-    # ----------------------------------------------
     # QUESTION INPUT
     # ----------------------------------------------
 
@@ -295,116 +471,158 @@ if mode == "Ask Questions":
 
     if question:
 
-        st.session_state.messages.append({
-            "role": "user",
-            "content": question
-        })
+        try:
 
-        with st.chat_message("user"):
+            # --------------------------------------
+            # CREATE OR GET CONVERSATION
+            # --------------------------------------
 
-            st.markdown(question)
+            conversation_id = get_active_conversation_id(
+                question,
+                "Ask Questions"
+            )
 
-        with st.chat_message("assistant"):
+            # --------------------------------------
+            # SAVE USER QUESTION
+            # --------------------------------------
+
+            save_message(
+                conversation_id,
+                "user",
+                question
+            )
+
+            st.session_state.messages.append({
+
+                "role": "user",
+
+                "content": question
+
+            })
+
+            # --------------------------------------
+            # RETRIEVE DOCUMENTS
+            # --------------------------------------
 
             with st.spinner(
                 "Searching documents and generating answer..."
             ):
 
-                try:
+                results = search_documents_with_sources(
+                    question,
+                    source=selected_source
+                )
 
-                    results = search_documents_with_sources(
-                        question,
-                        source=selected_source
+                if not results:
+
+                    answer = (
+                        "I could not find relevant information "
+                        "in the selected documents."
                     )
 
-                    if not results:
+                    sources = []
 
-                        answer = (
-                            "I could not find relevant information "
-                            "in the selected documents."
-                        )
+                else:
 
-                        sources = []
+                    normalized_results = [
+                        (document, metadata or {})
+                        for document, metadata in results
+                    ]
 
-                    else:
-
-                        normalized_results = [
-                            (document, metadata or {})
-                            for document, metadata in results
-                        ]
-
-                        context = "\n\n".join(
-                            f"""
+                    context = "\n\n".join(
+                        f"""
 [Source: {metadata.get('source', 'Unknown document')},
 Chunk: {metadata.get('chunk_index', -1)}]
 
 {document}
 """
-                            for document, metadata
-                            in normalized_results
-                        )
-
-                        answer = generate_answer(
-                            question,
-                            context
-                        )
-
-                        sources = []
-
-                        for document, metadata in normalized_results:
-
-                            sources.append({
-                                "source": metadata.get(
-                                    "source",
-                                    "Unknown document"
-                                ),
-                                "chunk_index": metadata.get(
-                                    "chunk_index",
-                                    -1
-                                ),
-                                "content": document
-                            })
-
-                    st.markdown(answer)
-
-                    if sources:
-
-                        with st.expander(
-                            "📚 View Source Context"
-                        ):
-
-                            for i, source in enumerate(sources):
-
-                                st.markdown(
-                                    f"**Source {i + 1}: "
-                                    f"{source['source']}**"
-                                )
-
-                                st.markdown(
-                                    f"Chunk: {source['chunk_index']}"
-                                )
-
-                                st.write(source["content"])
-
-                    st.session_state.messages.append({
-                        "role": "assistant",
-                        "content": answer,
-                        "sources": sources
-                    })
-
-                except Exception as e:
-
-                    error_message = (
-                        f"Something went wrong: {e}"
+                        for document, metadata in normalized_results
                     )
 
-                    st.error(error_message)
+                    # ----------------------------------
+                    # GENERATE ANSWER
+                    # ----------------------------------
 
-                    st.session_state.messages.append({
-                        "role": "assistant",
-                        "content": error_message,
-                        "sources": []
-                    })
+                    answer = generate_answer(
+                        question,
+                        context
+                    )
+
+                    # ----------------------------------
+                    # PREPARE SOURCES
+                    # ----------------------------------
+
+                    sources = []
+
+                    for document, metadata in normalized_results:
+
+                        sources.append({
+
+                            "source": metadata.get(
+                                "source",
+                                "Unknown document"
+                            ),
+
+                            "chunk_index": metadata.get(
+                                "chunk_index",
+                                -1
+                            ),
+
+                            "content": document
+
+                        })
+
+            # --------------------------------------
+            # SAVE ASSISTANT ANSWER
+            # --------------------------------------
+
+            save_message(
+                conversation_id,
+                "assistant",
+                answer,
+                sources
+            )
+
+            st.session_state.messages.append({
+
+                "role": "assistant",
+
+                "content": answer,
+
+                "sources": sources
+
+            })
+
+        except Exception as e:
+
+            error_message = f"Something went wrong: {e}"
+
+            if st.session_state.active_conversation_id is not None:
+
+                save_message(
+                    st.session_state.active_conversation_id,
+                    "assistant",
+                    error_message,
+                    []
+                )
+
+                st.session_state.messages.append({
+
+                    "role": "assistant",
+
+                    "content": error_message,
+
+                    "sources": []
+
+                })
+
+            st.error(error_message)
+
+    # ----------------------------------------------
+    # DISPLAY CHAT HISTORY
+    # ----------------------------------------------
+
+    display_messages()
 
 
 # ==================================================
@@ -463,7 +681,6 @@ elif mode == "Compare Documents":
             use_container_width=True
         ):
 
-            # Clear previous result before validation
             clear_comparison_result()
 
             if len(selected_docs) < 2:
@@ -480,98 +697,159 @@ elif mode == "Compare Documents":
 
             else:
 
-                with st.spinner(
-                    "Retrieving information and comparing documents..."
-                ):
+                try:
 
-                    try:
+                    # ----------------------------------
+                    # CREATE OR GET CONVERSATION
+                    # ----------------------------------
 
-                        # Retrieve relevant chunks
+                    conversation_id = get_active_conversation_id(
+                        comparison_question,
+                        "Compare Documents"
+                    )
+
+                    # ----------------------------------
+                    # SAVE USER QUESTION
+                    # ----------------------------------
+
+                    save_message(
+                        conversation_id,
+                        "user",
+                        comparison_question
+                    )
+
+                    st.session_state.messages.append({
+
+                        "role": "user",
+
+                        "content": comparison_question
+
+                    })
+
+                    with st.spinner(
+                        "Retrieving information and comparing documents..."
+                    ):
+
+                        # ----------------------------------
+                        # RETRIEVE DOCUMENTS
+                        # ----------------------------------
+
                         results = search_documents_with_sources(
                             comparison_question,
                             selected_sources=selected_docs
                         )
 
-                        # Group chunks by PDF
                         grouped_context = group_results_by_source(
                             results
                         )
 
-                        # Check relevant information in both PDFs
+                        # ----------------------------------
+                        # CHECK RESULTS
+                        # ----------------------------------
+
                         if len(grouped_context) < 2:
 
-                            st.session_state.comparison_result = (
+                            answer = (
                                 "Relevant information was found in fewer "
                                 "than two selected documents. Try a "
                                 "different question or select other PDFs."
                             )
 
-                            st.session_state.comparison_sources = {}
+                            comparison_sources = []
 
                         else:
 
-                            # Generate comparison
+                            # ----------------------------------
+                            # GENERATE COMPARISON
+                            # ----------------------------------
+
                             answer = generate_comparison_answer(
                                 comparison_question,
                                 grouped_context
                             )
 
-                            st.session_state.comparison_result = answer
+                            # ----------------------------------
+                            # FLATTEN SOURCES FOR SQLITE
+                            # ----------------------------------
 
-                            st.session_state.comparison_sources = (
-                                grouped_context
-                            )
+                            comparison_sources = []
 
-                        st.session_state.comparison_question = (
-                            comparison_question
+                            for filename, chunks in grouped_context.items():
+
+                                for chunk in chunks:
+
+                                    comparison_sources.append({
+
+                                        "source": filename,
+
+                                        "chunk_index": chunk["chunk_index"],
+
+                                        "content": chunk["content"]
+
+                                    })
+
+                    # --------------------------------------
+                    # SAVE COMPARISON ANSWER
+                    # --------------------------------------
+
+                    save_message(
+                        conversation_id,
+                        "assistant",
+                        answer,
+                        comparison_sources
+                    )
+
+                    st.session_state.messages.append({
+
+                        "role": "assistant",
+
+                        "content": answer,
+
+                        "sources": comparison_sources
+
+                    })
+
+                    # --------------------------------------
+                    # UPDATE COMPARISON STATE
+                    # --------------------------------------
+
+                    st.session_state.comparison_result = answer
+
+                    st.session_state.comparison_sources = grouped_context
+
+                    st.session_state.comparison_question = (
+                        comparison_question
+                    )
+
+                except Exception as e:
+
+                    error_message = f"Comparison failed: {e}"
+
+                    if st.session_state.active_conversation_id is not None:
+
+                        save_message(
+                            st.session_state.active_conversation_id,
+                            "assistant",
+                            error_message,
+                            []
                         )
 
-                    except Exception as e:
+                        st.session_state.messages.append({
 
-                        st.error(
-                            f"Comparison failed: {e}"
-                        )
+                            "role": "assistant",
+
+                            "content": error_message,
+
+                            "sources": []
+
+                        })
+
+                    st.error(error_message)
 
         # ------------------------------------------
-        # DISPLAY COMPARISON RESULT
+        # DISPLAY COMPARISON CHAT HISTORY
         # ------------------------------------------
 
-        if st.session_state.comparison_result:
+        st.divider()
 
-            st.divider()
-
-            st.subheader("📋 Comparison Result")
-
-            st.markdown(
-                st.session_state.comparison_result
-            )
-
-            # --------------------------------------
-            # DISPLAY RETRIEVED SOURCES
-            # --------------------------------------
-
-            if st.session_state.comparison_sources:
-
-                with st.expander(
-                    "📚 View Retrieved Sources"
-                ):
-
-                    for filename, chunks in (
-                        st.session_state.comparison_sources.items()
-                    ):
-
-                        st.markdown(
-                            f"### 📄 {filename}"
-                        )
-
-                        for chunk in chunks:
-
-                            st.markdown(
-                                f"**Chunk: {chunk['chunk_index']}**"
-                            )
-
-                            st.write(
-                                chunk["content"]
-                            )
-
-                            st.divider()
+        display_messages()

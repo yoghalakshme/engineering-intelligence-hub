@@ -26,3 +26,4 @@ data/processed/
 .vscode/
 .DS_Store
 Thumbs.db
+data/chat_history.db
