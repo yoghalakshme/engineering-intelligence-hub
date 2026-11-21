@@ -302,46 +302,67 @@ with st.sidebar:
     # PDF UPLOAD
     # ----------------------------------------------
 
-    st.subheader("📄 Upload Documents")
+   
+# ----------------------------------------------
+# PDF UPLOAD
+# ----------------------------------------------
 
-    uploaded_files = st.file_uploader(
-        "Choose PDF files",
-        type=["pdf"],
-        accept_multiple_files=True
-    )
+st.subheader("📄 Upload Documents")
 
-    if uploaded_files:
+uploaded_files = st.file_uploader(
+    "Choose PDF files",
+    type=None,
+    accept_multiple_files=True,
+    key="pdf_uploader"
+)
 
-        for uploaded_file in uploaded_files:
+if uploaded_files:
 
-            if st.button(
-                f"Process {uploaded_file.name}",
-                key=f"process_{uploaded_file.name}"
-            ):
+    for uploaded_file in uploaded_files:
 
-                try:
+        if st.button(
+            f"Process {uploaded_file.name}",
+            key=f"process_{uploaded_file.name}"
+        ):
 
-                    with st.spinner(
-                        f"Processing {uploaded_file.name}..."
-                    ):
+            try:
 
-                        chunks = store_uploaded_pdf(
-                            uploaded_file.getvalue(),
-                            uploaded_file.name
-                        )
+                # Validate file extension
+                if not uploaded_file.name.lower().endswith(".pdf"):
+                    st.error("Only PDF files are allowed.")
+                    continue
 
-                    st.success(
-                        f"{uploaded_file.name}: "
-                        f"{chunks} chunks stored!"
+                # Read uploaded file
+                pdf_bytes = uploaded_file.getvalue()
+
+                # Validate PDF signature
+                if not pdf_bytes.startswith(b"%PDF-"):
+                    st.error(
+                        f"{uploaded_file.name} is not a valid PDF."
+                    )
+                    continue
+
+                # Process PDF
+                with st.spinner(
+                    f"Processing {uploaded_file.name}..."
+                ):
+
+                    chunks = store_uploaded_pdf(
+                        pdf_bytes,
+                        uploaded_file.name
                     )
 
-                    st.rerun()
+                st.success(
+                    f"{uploaded_file.name}: "
+                    f"{chunks} chunks stored successfully!"
+                )
 
-                except Exception as e:
+                st.rerun()
 
-                    st.error(f"Upload failed: {e}")
+            except Exception as e:
 
-    st.divider()
+                st.error(f"Upload failed: {e}")
+
 
     # ----------------------------------------------
     # MANAGE DOCUMENTS
